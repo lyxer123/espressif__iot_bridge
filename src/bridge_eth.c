@@ -33,10 +33,15 @@
 static const char *TAG = "bridge_eth";
 static esp_eth_phy_t *phy = NULL;
 
-// 为双网卡支持添加静态变量
+// 为双网卡支持添加静态变量（移到文件作用域）
 #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
-static bool first_eth_lan_created = false;
-static bool first_eth_wan_created = false;
+static int lan_index = 0;
+static int wan_index = 0;
+// 添加函数来重置计数器
+static void reset_eth_index_counters(void) {
+    lan_index = 0;
+    wan_index = 0;
+}
 #endif
 
 #if defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
@@ -417,24 +422,23 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
         esp_netif_common_config.flags |= ESP_NETIF_DHCP_CLIENT;
     }
 
-    // 为双网卡模式添加特殊处理
-    static bool first_eth_lan_created = false;
-    static bool first_eth_wan_created = false;
-    
+    // 为双网卡模式添加特殊处理，确保每个接口有唯一键值
     #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
     if (data_forwarding) {
-        if (!first_eth_lan_created) {
+        if (lan_index == 0) {
             esp_netif_common_config.if_key = "ETH_LAN0";
-            first_eth_lan_created = true;
+            lan_index++;
         } else {
             esp_netif_common_config.if_key = "ETH_LAN1";
+            lan_index++;  // 增加索引以支持更多接口
         }
     } else {
-        if (!first_eth_wan_created) {
+        if (wan_index == 0) {
             esp_netif_common_config.if_key = "ETH_WAN0";
-            first_eth_wan_created = true;
+            wan_index++;
         } else {
             esp_netif_common_config.if_key = "ETH_WAN1";
+            wan_index++;  // 增加索引以支持更多接口
         }
     }
     #endif
@@ -627,21 +631,16 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
 esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], bool data_forwarding0, bool enable_dhcps0,
                                               esp_netif_ip_info_t *ip_info1, uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1)
 {
-    // 重置静态变量以支持双网卡模式
-    extern bool first_eth_lan_created;
-    extern bool first_eth_wan_created;
-    first_eth_lan_created = false;
-    first_eth_wan_created = false;
+    // 重置索引计数器以确保双网卡模式下每个接口有唯一键值
+    #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+    reset_eth_index_counters();
+    #endif
     
     // 创建第一个以太网接口
     esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0, data_forwarding0, enable_dhcps0);
     
     // 小延迟确保正确初始化
     vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // 重置静态变量以确保第二个接口使用不同的键值
-    first_eth_lan_created = (data_forwarding0) ? true : first_eth_lan_created;
-    first_eth_wan_created = (!data_forwarding0) ? true : first_eth_wan_created;
     
     // 创建第二个以太网接口
     esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1, data_forwarding1, enable_dhcps1);

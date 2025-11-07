@@ -339,7 +339,12 @@ void dhcp_dns_before_updated_customer_cb(void)
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_STATION)
     netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
 #elif (defined(CONFIG_BRIDGE_EXTERNAL_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN))
+    // 在双网卡模式下，我们需要指定具体的接口
+    #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+    netif = esp_netif_get_handle_from_ifkey("ETH_WAN0");  // 使用第一个WAN接口
+    #else
     netif = esp_netif_get_handle_from_ifkey("ETH_WAN");
+    #endif
 #endif
     if (netif) {
         esp_netif_get_dns_info(netif, ESP_NETIF_DNS_MAIN, &old_dns_info);
@@ -352,7 +357,12 @@ void dhcp_dns_updated_customer_cb(void)
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_STATION)
     netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
 #elif (defined(CONFIG_BRIDGE_EXTERNAL_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN))
+    // 在双网卡模式下，我们需要指定具体的接口
+    #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+    netif = esp_netif_get_handle_from_ifkey("ETH_WAN0");  // 使用第一个WAN接口
+    #else
     netif = esp_netif_get_handle_from_ifkey("ETH_WAN");
+    #endif
 #endif
     if (netif) {
         esp_netif_dns_info_t dns_info = {0};
@@ -387,7 +397,12 @@ esp_err_t esp_bridge_update_dns_info(esp_netif_t *external_netif, esp_netif_t *d
         esp_bridge_update_data_forwarding_netif_dns_info(esp_netif_get_handle_from_ifkey("SPI_DEF"), &dns_info);
 #endif
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
+        // 在双网卡模式下，我们需要指定具体的接口
+        #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+        esp_bridge_update_data_forwarding_netif_dns_info(esp_netif_get_handle_from_ifkey("ETH_LAN0"), &dns_info);
+        #else
         esp_bridge_update_data_forwarding_netif_dns_info(esp_netif_get_handle_from_ifkey("ETH_LAN"), &dns_info);
+        #endif
 #endif
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_USB)
         esp_bridge_update_data_forwarding_netif_dns_info(esp_netif_get_handle_from_ifkey("USB_DEF"), &dns_info);
