@@ -642,6 +642,14 @@ void esp_bridge_create_all_netif(void)
     esp_bridge_create_sdio_netif(NULL, sdio_mac, false, false);
 #endif
 
+// Add dual ethernet support
+#if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+    // Create dual ethernet interfaces
+    // For dual ethernet, we need to pass specific parameters to avoid conflicts
+    uint8_t mac0[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
+    uint8_t mac1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
+    esp_bridge_create_dual_eth_netif(NULL, mac0, true, true, NULL, mac1, false, false);
+#else
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
     esp_bridge_create_eth_netif(NULL, NULL, true, true);
 #endif
@@ -649,6 +657,7 @@ void esp_bridge_create_all_netif(void)
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
     esp_bridge_create_eth_netif(NULL, NULL, false, false);
 #endif
+#endif // CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_MODEM)
