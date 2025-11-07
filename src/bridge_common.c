@@ -642,12 +642,13 @@ void esp_bridge_create_all_netif(void)
     esp_bridge_create_sdio_netif(NULL, sdio_mac, false, false);
 #endif
 
-// Add dual ethernet support
+// 添加双网卡支持
 #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
-    // Create dual ethernet interfaces
-    // For dual ethernet, we need to pass specific parameters to avoid conflicts
+    // 创建双网卡接口
+    // 为双网卡设置特定参数以避免冲突
     uint8_t mac0[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
     uint8_t mac1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
+    ESP_LOGI(TAG, "Creating dual ethernet interfaces");
     esp_bridge_create_dual_eth_netif(NULL, mac0, true, true, NULL, mac1, false, false);
 #else
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)

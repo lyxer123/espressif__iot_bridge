@@ -31,8 +31,13 @@
 #include "sdkconfig.h"
 
 static const char *TAG = "bridge_eth";
-
 static esp_eth_phy_t *phy = NULL;
+
+// 为双网卡支持添加静态变量
+#if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+static bool first_eth_lan_created = false;
+static bool first_eth_wan_created = false;
+#endif
 
 #if defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
 esp_eth_netif_glue_handle_t esp_bridge_eth_new_netif_glue(esp_eth_handle_t eth_hdl);
@@ -397,12 +402,13 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
         .lost_ip_event = IP_EVENT_ETH_LOST_IP,
 #endif
-        .if_key = "ETH_WAN",
+        .if_key = "ETH_WAN",  // 默认键值
         .if_desc = "eth",
         .flags = (esp_netif_flags_t)(ESP_NETIF_FLAG_GARP | ESP_NETIF_FLAG_EVENT_IP_MODIFIED),
         .route_prio = 50,
     };
 
+    // 为数据转发接口设置不同的键值和优先级
     if (data_forwarding) {
         esp_netif_common_config.flags |= ESP_NETIF_DHCP_SERVER;
         esp_netif_common_config.if_key = "ETH_LAN";
@@ -410,6 +416,28 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
     } else {
         esp_netif_common_config.flags |= ESP_NETIF_DHCP_CLIENT;
     }
+
+    // 为双网卡模式添加特殊处理
+    static bool first_eth_lan_created = false;
+    static bool first_eth_wan_created = false;
+    
+    #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+    if (data_forwarding) {
+        if (!first_eth_lan_created) {
+            esp_netif_common_config.if_key = "ETH_LAN0";
+            first_eth_lan_created = true;
+        } else {
+            esp_netif_common_config.if_key = "ETH_LAN1";
+        }
+    } else {
+        if (!first_eth_wan_created) {
+            esp_netif_common_config.if_key = "ETH_WAN0";
+            first_eth_wan_created = true;
+        } else {
+            esp_netif_common_config.if_key = "ETH_WAN1";
+        }
+    }
+    #endif
 
     const esp_netif_driver_ifconfig_t eth_driver_ifconfig = {
         .driver_free_rx_buffer = eth_driver_free_rx_buffer,
@@ -468,17 +496,17 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
     static esp_eth_handle_t eth_handle_spi0 = NULL;
     static esp_eth_handle_t eth_handle_spi1 = NULL;
     
-    // Only initialize GPIO ISR service and SPI bus if not already done
+    // 只有在未初始化时才初始化GPIO ISR服务和SPI总线
     if (!eth_is_start) {
-        // Install GPIO ISR handler to be able to service SPI Eth modules interrupts
-        // Only install if not already installed
+        // 安装GPIO ISR服务来处理SPI以太网模块中断
+        // 只有在未安装时才安装
         esp_err_t gpio_ret = gpio_install_isr_service(0);
         if (gpio_ret != ESP_OK && gpio_ret != ESP_ERR_INVALID_STATE) {
             ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(gpio_ret));
             return gpio_ret;
         }
 
-        // Init SPI bus
+        // 初始化SPI总线
         spi_bus_config_t buscfg = {
             .miso_io_num = CONFIG_BRIDGE_ETH_SPI_MISO_GPIO,
             .mosi_io_num = CONFIG_BRIDGE_ETH_SPI_MOSI_GPIO,
@@ -487,7 +515,7 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
             .quadhd_io_num = -1,
         };
         
-        // Only initialize SPI bus if not already initialized
+        // 只有在未初始化时才初始化SPI总线
         esp_err_t spi_ret = spi_bus_initialize(CONFIG_BRIDGE_ETH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
         if (spi_ret != ESP_OK && spi_ret != ESP_ERR_INVALID_STATE) {
             ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(spi_ret));
@@ -495,7 +523,7 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
         }
     }
     
-    // Configure first SPI Ethernet module
+    // 配置第一个SPI以太网模块
     if (!eth_handle_spi0) {
         spi_device_interface_config_t devcfg0 = {
             .mode = 0,
@@ -513,7 +541,7 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
         }
     }
     
-    // Configure second SPI Ethernet module
+    // 配置第二个SPI以太网模块
     if (!eth_handle_spi1) {
         spi_device_interface_config_t devcfg1 = {
             .mode = 0,
@@ -532,14 +560,14 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
     }
 
     if (eth_handle_spi0) {
-        /* The SPI Ethernet module might not have a burned factory MAC address, we can set it manually.
-        02:00:00 is a Locally Administered OUI range so should not be used except when testing on a LAN under your control.
+        /* SPI以太网模块可能没有烧录的工厂MAC地址，我们可以手动设置。
+        02:00:00是本地管理的OUI范围，除非在受控局域网中测试，否则不应使用。
         */
         ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle_spi0, ETH_CMD_S_MAC_ADDR, (uint8_t[]) {
             0x02, 0x00, 0x00, 0x12, 0x34, 0x57
         }));
 
-        // attach Ethernet driver to TCP/IP stack
+        // 将以太网驱动附加到TCP/IP堆栈
 #if defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
         ESP_ERROR_CHECK(esp_netif_attach(eth_netif_spi0, esp_bridge_eth_new_netif_glue(eth_handle_spi0)));
 #else
@@ -548,14 +576,14 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
     }
     
     if (eth_handle_spi1) {
-        /* The SPI Ethernet module might not have a burned factory MAC address, we can set it manually.
-        02:00:00 is a Locally Administered OUI range so should not be used except when testing on a LAN under your control.
+        /* SPI以太网模块可能没有烧录的工厂MAC地址，我们可以手动设置。
+        02:00:00是本地管理的OUI范围，除非在受控局域网中测试，否则不应使用。
         */
         ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle_spi1, ETH_CMD_S_MAC_ADDR, (uint8_t[]) {
             0x02, 0x00, 0x00, 0x12, 0x34, 0x58
         }));
 
-        // attach Ethernet driver to TCP/IP stack
+        // 将以太网驱动附加到TCP/IP堆栈
 #if defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
         ESP_ERROR_CHECK(esp_netif_attach(eth_netif_spi1, esp_bridge_eth_new_netif_glue(eth_handle_spi1)));
 #else
@@ -563,9 +591,9 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
 #endif
     }
 
-    // Start Ethernet driver state machine only once
+    // 只启动一次以太网驱动状态机
     if (!eth_is_start) {
-        /* start Ethernet driver state machine */
+        /* 启动以太网驱动状态机 */
         if (eth_handle_spi0) {
             ret = esp_eth_start(eth_handle_spi0);
         }
@@ -599,24 +627,38 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
 esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], bool data_forwarding0, bool enable_dhcps0,
                                               esp_netif_ip_info_t *ip_info1, uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1)
 {
-    // Create first ethernet interface
+    // 重置静态变量以支持双网卡模式
+    extern bool first_eth_lan_created;
+    extern bool first_eth_wan_created;
+    first_eth_lan_created = false;
+    first_eth_wan_created = false;
+    
+    // 创建第一个以太网接口
     esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0, data_forwarding0, enable_dhcps0);
     
-    // Small delay to ensure proper initialization
+    // 小延迟确保正确初始化
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    // Create second ethernet interface with different parameters to avoid conflicts
+    // 重置静态变量以确保第二个接口使用不同的键值
+    first_eth_lan_created = (data_forwarding0) ? true : first_eth_lan_created;
+    first_eth_wan_created = (!data_forwarding0) ? true : first_eth_wan_created;
+    
+    // 创建第二个以太网接口
     esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1, data_forwarding1, enable_dhcps1);
     
-    // Initialize both SPI ethernet interfaces (only when dual ethernet is supported and SPI ethernet is used)
+    // 初始化两个SPI以太网接口（仅在启用双网卡和SPI以太网时）
     #if CONFIG_BRIDGE_USE_SPI_ETHERNET
     if (netif0 && netif1) {
         esp_err_t ret = esp_bridge_dual_eth_spi_init(netif0, netif1);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to initialize dual SPI ethernet: %s", esp_err_to_name(ret));
-            // Clean up
-            esp_netif_destroy(netif0);
-            esp_netif_destroy(netif1);
+            // 清理
+            if (netif0) {
+                esp_netif_destroy(netif0);
+            }
+            if (netif1) {
+                esp_netif_destroy(netif1);
+            }
             return NULL;
         }
     }
@@ -624,10 +666,12 @@ esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uin
     
     if (netif0 && netif1) {
         ESP_LOGI(TAG, "Dual Ethernet interfaces created successfully");
+        ESP_LOGI(TAG, "First interface key: %s", esp_netif_get_ifkey(netif0));
+        ESP_LOGI(TAG, "Second interface key: %s", esp_netif_get_ifkey(netif1));
         return netif0;
     } else {
         ESP_LOGE(TAG, "Failed to create dual Ethernet interfaces");
-        // Clean up if one of them failed
+        // 清理失败的接口
         if (netif0) {
             esp_netif_destroy(netif0);
         }
