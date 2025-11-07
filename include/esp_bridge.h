@@ -100,6 +100,8 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
 *
 * @param[in] ip_info0: custom ip address for first interface, if set NULL, it will automatically be assigned.
 * @param[in] mac0: custom mac address for first interface, if set NULL, it will automatically be assigned.
+* @param[in] data_forwarding0: whether to use first interface as data forwarding netif
+* @param[in] enable_dhcps0: whether to enable DHCP server for first interface
 * @param[in] ip_info1: custom ip address for second interface, if set NULL, it will automatically be assigned.
 * @param[in] mac1: custom mac address for second interface, if set NULL, it will automatically be assigned.
 * @param[in] data_forwarding1: whether to use second interface as data forwarding netif
@@ -109,9 +111,8 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
 *      - instance: the first netif instance created successfully
 *      - NULL: failed because some error occurred
 */
-esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6],
-                                              esp_netif_ip_info_t *ip_info1, uint8_t mac1[6],
-                                              bool data_forwarding1, bool enable_dhcps1);
+esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], bool data_forwarding0, bool enable_dhcps0,
+                                              esp_netif_ip_info_t *ip_info1, uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1);
 #endif
 #endif
 

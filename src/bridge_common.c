@@ -664,7 +664,7 @@ void esp_bridge_create_all_netif(void)
     uint8_t mac0[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
     uint8_t mac1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
     ESP_LOGI(TAG, "Creating dual ethernet interfaces");
-    esp_bridge_create_dual_eth_netif(NULL, mac0, NULL, mac1, false, false);
+    esp_bridge_create_dual_eth_netif(NULL, mac0, true, true, NULL, mac1, false, false);
 #else
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
     esp_bridge_create_eth_netif(NULL, NULL, true, true);

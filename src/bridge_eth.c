@@ -499,7 +499,7 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
         #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
         static int spi_eth_counter = 0;
         // 为网络接口设置不同的MAC地址
-        if (custom_mac == NULL) {
+        if (mac == NULL) {  // 修复变量名错误
             uint8_t dual_mac[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x56};
             if (spi_eth_counter == 0) {
                 dual_mac[5] = 0x57;  // 第一个接口
@@ -693,7 +693,8 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
 *      - instance: the first netif instance created successfully
 *      - NULL: failed because some error occurred
 */
-esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1)
+esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], bool data_forwarding0, bool enable_dhcps0,
+                                              esp_netif_ip_info_t *ip_info1, uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1)
 {
     // 重置索引计数器以确保双网卡模式下每个接口有唯一键值
     #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
@@ -705,13 +706,13 @@ esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uin
     uint8_t default_mac1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
     
     // 创建第一个以太网接口（数据转发接口）
-    esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0 ? mac0 : default_mac0, true, true);
+    esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0 ? mac0 : default_mac0, data_forwarding0, enable_dhcps0);
     
     // 小延迟确保正确初始化
     vTaskDelay(pdMS_TO_TICKS(100));
     
     // 创建第二个以太网接口（外部网络接口）
-    esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1 ? mac1 : default_mac1, false, false);
+    esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1 ? mac1 : default_mac1, data_forwarding1, enable_dhcps1);
     
     // 对于双网卡模式，我们需要确保SPI以太网正确初始化
     #if CONFIG_BRIDGE_USE_SPI_ETHERNET
