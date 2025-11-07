@@ -79,14 +79,65 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "Ethernet Link Up");
         ESP_LOGI(TAG, "Ethernet HW Addr "MACSTR"", MAC2STR(mac_addr));
         
-        // 当以太网连接时，不需要显式处理，系统会自动处理
+        // 当以太网连接时，确保网络接口处于活动状态
+        // 获取关联的网络接口
+        esp_netif_t *eth_netif = NULL;
+        // 尝试通过驱动句柄获取网络接口
+        eth_netif = esp_netif_get_handle_from_ifkey("ETH_LAN0");
+        if (!eth_netif) {
+            eth_netif = esp_netif_get_handle_from_ifkey("ETH_LAN1");
+        }
+        if (!eth_netif) {
+            eth_netif = esp_netif_get_handle_from_ifkey("ETH_WAN0");
+        }
+        if (!eth_netif) {
+            eth_netif = esp_netif_get_handle_from_ifkey("ETH_WAN1");
+        }
+        
+        if (eth_netif) {
+            // 确保网络接口的硬件地址正确设置
+            esp_netif_set_mac(eth_netif, mac_addr);
+            esp_netif_up(eth_netif);
+            ESP_LOGI(TAG, "Network interface %s brought up", esp_netif_get_ifkey(eth_netif));
+            
+            // 重启DHCP服务器以确保正确分配IP
+            if (esp_netif_get_flags(eth_netif) & ESP_NETIF_DHCP_SERVER) {
+                esp_netif_dhcps_stop(eth_netif);
+                esp_netif_dhcps_start(eth_netif);
+                ESP_LOGI(TAG, "DHCP server restarted for interface %s", esp_netif_get_ifkey(eth_netif));
+            }
+        }
         break;
 
     case ETHERNET_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "Ethernet Link Down");
         IOT_BRIDGE_NAPT_TABLE_CLEAR();
         
-        // 当以太网断开连接时，不需要显式处理，系统会自动处理
+        // 当以太网断开连接时，确保网络接口处于非活动状态
+        esp_netif_t *disconnected_netif = NULL;
+        // 尝试通过驱动句柄获取网络接口
+        disconnected_netif = esp_netif_get_handle_from_ifkey("ETH_LAN0");
+        if (!disconnected_netif) {
+            disconnected_netif = esp_netif_get_handle_from_ifkey("ETH_LAN1");
+        }
+        if (!disconnected_netif) {
+            disconnected_netif = esp_netif_get_handle_from_ifkey("ETH_WAN0");
+        }
+        if (!disconnected_netif) {
+            disconnected_netif = esp_netif_get_handle_from_ifkey("ETH_WAN1");
+        }
+        
+        if (disconnected_netif) {
+            // 停止DHCP服务器
+            if (esp_netif_get_flags(disconnected_netif) & ESP_NETIF_DHCP_SERVER) {
+                esp_netif_dhcps_stop(disconnected_netif);
+                ESP_LOGI(TAG, "DHCP server stopped for interface %s", esp_netif_get_ifkey(disconnected_netif));
+            }
+            
+            // 注意：在ESP-IDF中，通常不需要显式调用esp_netif_down
+            // 网络接口状态会由底层驱动自动管理
+            ESP_LOGI(TAG, "Network interface %s link down", esp_netif_get_ifkey(disconnected_netif));
+        }
         break;
 
     case ETHERNET_EVENT_START:
@@ -394,6 +445,9 @@ esp_err_t esp_bridge_eth_spi_init(esp_netif_t* eth_netif_spi)
 #else
         ESP_ERROR_CHECK(esp_netif_attach(eth_netif_spi, esp_eth_new_netif_glue(eth_handle_spi)));
 #endif
+        
+        // 确保网络接口的硬件地址长度正确设置
+        esp_netif_set_mac(eth_netif_spi, mac_addr);
     }
 
     if (!eth_is_start) {
@@ -417,19 +471,37 @@ static esp_err_t eth_netif_dhcp_status_change_cb(esp_ip_addr_t *ip_info)
     // 获取所有以太网网络接口并确保它们处于正确状态
     esp_netif_t *eth_netif0 = esp_netif_get_handle_from_ifkey("ETH_LAN0");
     if (eth_netif0) {
-        // 重启网络接口上的DHCP服务器
-        esp_netif_dhcps_stop(eth_netif0);
-        esp_netif_dhcps_start(eth_netif0);
-        ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN0 (192.168.5.1)");
+        // 检查网络接口是否处于活动状态
+        if (esp_netif_is_netif_up(eth_netif0)) {
+            // 重启网络接口上的DHCP服务器
+            esp_netif_dhcps_stop(eth_netif0);
+            esp_err_t err = esp_netif_dhcps_start(eth_netif0);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN0 (192.168.5.1)");
+            } else {
+                ESP_LOGE(TAG, "Failed to restart DHCP server for ETH_LAN0: %s", esp_err_to_name(err));
+            }
+        } else {
+            ESP_LOGW(TAG, "ETH_LAN0 is not up, skipping DHCP server restart");
+        }
     }
     
     // 检查第二个接口
     esp_netif_t *eth_netif1 = esp_netif_get_handle_from_ifkey("ETH_LAN1");
     if (eth_netif1) {
-        // 重启网络接口上的DHCP服务器
-        esp_netif_dhcps_stop(eth_netif1);
-        esp_netif_dhcps_start(eth_netif1);
-        ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN1 (192.168.6.1)");
+        // 检查网络接口是否处于活动状态
+        if (esp_netif_is_netif_up(eth_netif1)) {
+            // 重启网络接口上的DHCP服务器
+            esp_netif_dhcps_stop(eth_netif1);
+            esp_err_t err = esp_netif_dhcps_start(eth_netif1);
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN1 (192.168.6.1)");
+            } else {
+                ESP_LOGE(TAG, "Failed to restart DHCP server for ETH_LAN1: %s", esp_err_to_name(err));
+            }
+        } else {
+            ESP_LOGW(TAG, "ETH_LAN1 is not up, skipping DHCP server restart");
+        }
     }
 
     return ESP_OK;
@@ -648,9 +720,8 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
         uint8_t mac_addr0[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
         ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle_spi0, ETH_CMD_S_MAC_ADDR, mac_addr0));
 
-        // 只有在网络接口尚未附加时才附加
-        // 检查网络接口是否已经附加
-        // 注意：在双网卡模式下，网络接口应该已经在esp_bridge_create_eth_netif中附加了
+        // 确保网络接口的硬件地址长度正确设置
+        esp_netif_set_mac(eth_netif_spi0, mac_addr0);
     }
     
     // 为第二个SPI以太网模块设置MAC地址并附加到网络接口（只执行一次）
@@ -658,9 +729,8 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
         uint8_t mac_addr1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
         ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle_spi1, ETH_CMD_S_MAC_ADDR, mac_addr1));
 
-        // 只有在网络接口尚未附加时才附加
-        // 检查网络接口是否已经附加
-        // 注意：在双网卡模式下，网络接口应该已经在esp_bridge_create_eth_netif中附加了
+        // 确保网络接口的硬件地址长度正确设置
+        esp_netif_set_mac(eth_netif_spi1, mac_addr1);
     }
 
     // 启动以太网驱动状态机（只启动一次）
