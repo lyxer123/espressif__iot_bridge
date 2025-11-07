@@ -30,6 +30,9 @@
 
 #include "sdkconfig.h"
 
+// Forward declaration of the DHCP status change callback
+static esp_err_t eth_netif_dhcp_status_change_cb(esp_ip_addr_t *ip_info);
+
 static const char *TAG = "bridge_eth";
 static esp_eth_phy_t *phy = NULL;
 
@@ -76,16 +79,14 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "Ethernet Link Up");
         ESP_LOGI(TAG, "Ethernet HW Addr "MACSTR"", MAC2STR(mac_addr));
         
-        // 当以太网连接时，确保网络接口处于活动状态
-        // 我们不需要显式获取网络接口，因为连接事件会自动处理
+        // 当以太网连接时，不需要显式处理，系统会自动处理
         break;
 
     case ETHERNET_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "Ethernet Link Down");
         IOT_BRIDGE_NAPT_TABLE_CLEAR();
         
-        // 当以太网断开连接时，不需要显式处理网络接口状态
-        // 连接断开事件会自动处理
+        // 当以太网断开连接时，不需要显式处理，系统会自动处理
         break;
 
     case ETHERNET_EVENT_START:
@@ -414,18 +415,21 @@ static esp_err_t eth_netif_dhcp_status_change_cb(esp_ip_addr_t *ip_info)
     }
 
     // 获取所有以太网网络接口并确保它们处于正确状态
-    esp_netif_t *eth_netif = esp_netif_get_handle_from_ifkey("ETH_LAN0");
-    if (eth_netif) {
+    esp_netif_t *eth_netif0 = esp_netif_get_handle_from_ifkey("ETH_LAN0");
+    if (eth_netif0) {
         // 重启网络接口上的DHCP服务器
-        esp_netif_dhcps_stop(eth_netif);
-        esp_netif_dhcps_start(eth_netif);
-        ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN0");
+        esp_netif_dhcps_stop(eth_netif0);
+        esp_netif_dhcps_start(eth_netif0);
+        ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN0 (192.168.5.1)");
     }
     
     // 检查第二个接口
-    esp_netif_t *eth_netif2 = esp_netif_get_handle_from_ifkey("ETH_WAN0");
-    if (eth_netif2) {
-        ESP_LOGI(TAG, "Found network interface ETH_WAN0");
+    esp_netif_t *eth_netif1 = esp_netif_get_handle_from_ifkey("ETH_LAN1");
+    if (eth_netif1) {
+        // 重启网络接口上的DHCP服务器
+        esp_netif_dhcps_stop(eth_netif1);
+        esp_netif_dhcps_start(eth_netif1);
+        ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN1 (192.168.6.1)");
     }
 
     return ESP_OK;
@@ -539,9 +543,12 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
                 esp_netif_set_ip_info(netif, &netif_ip_info);
             } else {
                 esp_netif_set_ip_info(netif, ip_info);
+                netif_ip_info = *ip_info;  // 保存IP信息用于后续使用
             }
             
             ESP_LOGI(TAG, "ETH IP Address:" IPSTR, IP2STR(&netif_ip_info.ip));
+            
+            // 为数据转发接口启用NAPT
             ip_napt_enable(netif_ip_info.ip.addr, 1);
             
             // 确保为数据转发接口启动DHCP服务器
@@ -693,44 +700,34 @@ esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uin
     reset_eth_index_counters();
     #endif
     
-    // 为双网卡设置特定参数以避免冲突
-    uint8_t default_mac0[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
-    uint8_t default_mac1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
-    
-    // 创建第一个以太网接口（数据转发接口）
-    esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0 ? mac0 : default_mac0, data_forwarding0, enable_dhcps0);
+    // 创建第一个以太网接口（数据转发接口1 - IP: 192.168.5.1）
+    esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0, data_forwarding0, enable_dhcps0);
     
     // 小延迟确保正确初始化
     vTaskDelay(pdMS_TO_TICKS(100));
     
-    // 创建第二个以太网接口（外部网络接口）
-    esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1 ? mac1 : default_mac1, data_forwarding1, enable_dhcps1);
-    
-    // 对于双网卡模式，我们需要确保SPI以太网正确初始化
-    #if CONFIG_BRIDGE_USE_SPI_ETHERNET
-    if (netif0 && netif1) {
-        // 调用双网卡SPI初始化函数确保硬件正确初始化
-        esp_err_t ret = esp_bridge_dual_eth_spi_init(netif0, netif1);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to initialize dual SPI ethernet: %s", esp_err_to_name(ret));
-            // 清理
-            if (netif0) {
-                esp_netif_destroy(netif0);
-            }
-            if (netif1) {
-                esp_netif_destroy(netif1);
-            }
-            return NULL;
-        }
-        ESP_LOGI(TAG, "Dual SPI Ethernet interfaces created successfully");
-        return netif0;
-    }
-    #endif
+    // 创建第二个以太网接口（数据转发接口2 - IP: 192.168.6.1）
+    esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1, data_forwarding1, enable_dhcps1);
     
     if (netif0 && netif1) {
         ESP_LOGI(TAG, "Dual Ethernet interfaces created successfully");
-        ESP_LOGI(TAG, "First interface key: %s", esp_netif_get_ifkey(netif0));
-        ESP_LOGI(TAG, "Second interface key: %s", esp_netif_get_ifkey(netif1));
+        ESP_LOGI(TAG, "First interface key: %s, IP: 192.168.5.1", esp_netif_get_ifkey(netif0));
+        ESP_LOGI(TAG, "Second interface key: %s, IP: 192.168.6.1", esp_netif_get_ifkey(netif1));
+        
+        // 确保两个接口都启用了NAPT转发
+        esp_netif_ip_info_t netif0_ip_info = {0};
+        esp_netif_ip_info_t netif1_ip_info = {0};
+        
+        if (esp_netif_get_ip_info(netif0, &netif0_ip_info) == ESP_OK) {
+            ip_napt_enable(netif0_ip_info.ip.addr, 1);
+            ESP_LOGI(TAG, "NAPT enabled for first interface");
+        }
+        
+        if (esp_netif_get_ip_info(netif1, &netif1_ip_info) == ESP_OK) {
+            ip_napt_enable(netif1_ip_info.ip.addr, 1);
+            ESP_LOGI(TAG, "NAPT enabled for second interface");
+        }
+        
         return netif0;
     } else {
         ESP_LOGE(TAG, "Failed to create dual Ethernet interfaces");

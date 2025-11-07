@@ -663,8 +663,21 @@ void esp_bridge_create_all_netif(void)
     // 为双网卡设置特定参数以避免冲突
     uint8_t mac0[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
     uint8_t mac1[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x58};
-    ESP_LOGI(TAG, "Creating dual ethernet interfaces");
-    esp_bridge_create_dual_eth_netif(NULL, mac0, true, true, NULL, mac1, false, false);
+    
+    // 为第一个网卡分配IP地址192.168.5.1
+    esp_netif_ip_info_t lan_ip_info0 = {0};
+    lan_ip_info0.ip.addr = esp_ip4addr_aton("192.168.5.1");
+    lan_ip_info0.gw.addr = esp_ip4addr_aton("192.168.5.1");
+    lan_ip_info0.netmask.addr = esp_ip4addr_aton("255.255.255.0");
+    
+    // 为第二个网卡分配IP地址192.168.6.1
+    esp_netif_ip_info_t lan_ip_info1 = {0};
+    lan_ip_info1.ip.addr = esp_ip4addr_aton("192.168.6.1");
+    lan_ip_info1.gw.addr = esp_ip4addr_aton("192.168.6.1");
+    lan_ip_info1.netmask.addr = esp_ip4addr_aton("255.255.255.0");
+    
+    ESP_LOGI(TAG, "Creating dual ethernet interfaces with specific IPs");
+    esp_bridge_create_dual_eth_netif(&lan_ip_info0, mac0, true, true, &lan_ip_info1, mac1, true, true);
 #else
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
     // 为数据转发以太网接口分配特定的IP地址段
