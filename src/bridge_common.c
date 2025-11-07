@@ -667,7 +667,19 @@ void esp_bridge_create_all_netif(void)
     esp_bridge_create_dual_eth_netif(NULL, mac0, true, true, NULL, mac1, false, false);
 #else
 #if defined(CONFIG_BRIDGE_DATA_FORWARDING_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
-    esp_bridge_create_eth_netif(NULL, NULL, true, true);
+    // 为数据转发以太网接口分配特定的IP地址段
+    esp_netif_ip_info_t lan_ip_info = {0};
+    lan_ip_info.ip.addr = esp_ip4addr_aton("192.168.4.1");
+    lan_ip_info.gw.addr = esp_ip4addr_aton("192.168.4.1");
+    lan_ip_info.netmask.addr = esp_ip4addr_aton("255.255.255.0");
+    
+    // 为双网卡模式设置不同的MAC地址
+    #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+    uint8_t lan_mac[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x57};
+    esp_bridge_create_eth_netif(&lan_ip_info, lan_mac, true, true);
+    #else
+    esp_bridge_create_eth_netif(&lan_ip_info, NULL, true, true);
+    #endif
 #endif
 
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)

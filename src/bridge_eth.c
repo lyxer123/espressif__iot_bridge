@@ -75,23 +75,29 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
         esp_eth_ioctl(eth_handle, ETH_CMD_G_MAC_ADDR, mac_addr);
         ESP_LOGI(TAG, "Ethernet Link Up");
         ESP_LOGI(TAG, "Ethernet HW Addr "MACSTR"", MAC2STR(mac_addr));
-            break;
+        
+        // 当以太网连接时，确保网络接口处于活动状态
+        // 我们不需要显式获取网络接口，因为连接事件会自动处理
+        break;
 
-        case ETHERNET_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "Ethernet Link Down");
-            IOT_BRIDGE_NAPT_TABLE_CLEAR();
-            break;
+    case ETHERNET_EVENT_DISCONNECTED:
+        ESP_LOGI(TAG, "Ethernet Link Down");
+        IOT_BRIDGE_NAPT_TABLE_CLEAR();
+        
+        // 当以太网断开连接时，不需要显式处理网络接口状态
+        // 连接断开事件会自动处理
+        break;
 
-        case ETHERNET_EVENT_START:
-            ESP_LOGI(TAG, "Ethernet Started");
-            break;
+    case ETHERNET_EVENT_START:
+        ESP_LOGI(TAG, "Ethernet Started");
+        break;
 
-        case ETHERNET_EVENT_STOP:
-            ESP_LOGI(TAG, "Ethernet Stopped");
-            break;
+    case ETHERNET_EVENT_STOP:
+        ESP_LOGI(TAG, "Ethernet Stopped");
+        break;
 
-        default:
-            break;
+    default:
+        break;
     }
 }
 #if defined(CONFIG_BRIDGE_EXTERNAL_NETIF_ETHERNET) || defined(CONFIG_BRIDGE_NETIF_ETHERNET_AUTO_WAN_OR_LAN)
@@ -401,8 +407,26 @@ esp_err_t esp_bridge_eth_spi_init(esp_netif_t* eth_netif_spi)
 
 static esp_err_t eth_netif_dhcp_status_change_cb(esp_ip_addr_t *ip_info)
 {
-    phy->reset_hw(phy);
-    ESP_LOGW(TAG, "Hardware Reset Ethernet PHY");
+    // 重新启动PHY硬件
+    if (phy) {
+        phy->reset_hw(phy);
+        ESP_LOGW(TAG, "Hardware Reset Ethernet PHY");
+    }
+
+    // 获取所有以太网网络接口并确保它们处于正确状态
+    esp_netif_t *eth_netif = esp_netif_get_handle_from_ifkey("ETH_LAN0");
+    if (eth_netif) {
+        // 重启网络接口上的DHCP服务器
+        esp_netif_dhcps_stop(eth_netif);
+        esp_netif_dhcps_start(eth_netif);
+        ESP_LOGI(TAG, "Restarted DHCP server for ETH_LAN0");
+    }
+    
+    // 检查第二个接口
+    esp_netif_t *eth_netif2 = esp_netif_get_handle_from_ifkey("ETH_WAN0");
+    if (eth_netif2) {
+        ESP_LOGI(TAG, "Found network interface ETH_WAN0");
+    }
 
     return ESP_OK;
 }
@@ -497,74 +521,42 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
 #elif CONFIG_BRIDGE_USE_SPI_ETHERNET
         // 在双网卡模式下，我们需要为每个接口设置不同的MAC地址
         #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
-        static int spi_eth_counter = 0;
-        // 为网络接口设置不同的MAC地址
-        if (mac == NULL) {  // 修复变量名错误
-            uint8_t dual_mac[6] = {0x02, 0x00, 0x00, 0x12, 0x34, 0x56};
-            if (spi_eth_counter == 0) {
-                dual_mac[5] = 0x57;  // 第一个接口
-                ESP_ERROR_CHECK(esp_netif_set_mac(netif, dual_mac));
-            } else if (spi_eth_counter == 1) {
-                dual_mac[5] = 0x58;  // 第二个接口
-                ESP_ERROR_CHECK(esp_netif_set_mac(netif, dual_mac));
-            }
-            spi_eth_counter++;
-        }
+        // MAC地址已经在调用函数时设置，这里不需要额外设置
         #endif
         esp_bridge_eth_spi_init(netif);
 #endif
+        // 确保网络接口处于up状态
         esp_netif_up(netif);
 
         ESP_LOGI(TAG, "[%-12s]", esp_netif_get_ifkey(netif));
 
         if (data_forwarding) {
             esp_bridge_netif_list_add(netif, eth_netif_dhcp_status_change_cb);
-            esp_netif_get_ip_info(netif, &netif_ip_info);
+            
+            // 如果没有提供IP信息，则请求一个
+            if (ip_info == NULL) {
+                esp_bridge_netif_request_ip(&netif_ip_info);
+                esp_netif_set_ip_info(netif, &netif_ip_info);
+            } else {
+                esp_netif_set_ip_info(netif, ip_info);
+            }
+            
             ESP_LOGI(TAG, "ETH IP Address:" IPSTR, IP2STR(&netif_ip_info.ip));
             ip_napt_enable(netif_ip_info.ip.addr, 1);
+            
+            // 确保为数据转发接口启动DHCP服务器
+            if (enable_dhcps) {
+                ESP_LOGI(TAG, "Starting DHCP server for data forwarding interface %s", esp_netif_get_ifkey(netif));
+                esp_netif_dhcps_stop(netif);  // 先停止再启动确保正确初始化
+                esp_netif_dhcps_start(netif);
+            }
         } else {
             esp_bridge_netif_list_add(netif, NULL);
         }
 
-        // 在双网卡模式下初始化SPI以太网
-        #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT) && CONFIG_BRIDGE_USE_SPI_ETHERNET
-        // 对于双网卡SPI以太网，我们需要在创建网络接口后初始化硬件
-        static bool spi_eth_initialized = false;
-        if (!spi_eth_initialized) {
-            // 我们将在第一个接口创建时初始化SPI以太网硬件
-            // 但不附加网络接口，因为网络接口已经通过esp_netif_attach创建了
-            esp_err_t ret = ESP_OK;
-            static bool eth_is_start = false;
-            static esp_eth_handle_t eth_handle_spi = NULL;
-            
-            if (!eth_is_start) {
-                // 安装GPIO ISR服务来处理SPI以太网模块中断
-                esp_err_t gpio_ret = gpio_install_isr_service(0);
-                if (gpio_ret != ESP_OK && gpio_ret != ESP_ERR_INVALID_STATE) {
-                    ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(gpio_ret));
-                    ret = gpio_ret;
-                }
-
-                // 初始化SPI总线
-                spi_bus_config_t buscfg = {
-                    .miso_io_num = CONFIG_BRIDGE_ETH_SPI_MISO_GPIO,
-                    .mosi_io_num = CONFIG_BRIDGE_ETH_SPI_MOSI_GPIO,
-                    .sclk_io_num = CONFIG_BRIDGE_ETH_SPI_SCLK_GPIO,
-                    .quadwp_io_num = -1,
-                    .quadhd_io_num = -1,
-                };
-                
-                esp_err_t spi_ret = spi_bus_initialize(CONFIG_BRIDGE_ETH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
-                if (spi_ret != ESP_OK && spi_ret != ESP_ERR_INVALID_STATE) {
-                    ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(spi_ret));
-                    ret = spi_ret;
-                }
-            }
-            spi_eth_initialized = true;
-        }
-        #endif
-
-        if (enable_dhcps) {
+        // 确保为数据转发接口启动DHCP服务器
+        if (enable_dhcps && data_forwarding) {
+            ESP_LOGI(TAG, "Ensuring DHCP server is started for interface %s", esp_netif_get_ifkey(netif));
             esp_netif_dhcps_start(netif);
         }
     }
