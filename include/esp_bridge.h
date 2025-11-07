@@ -88,6 +88,11 @@ esp_netif_t *esp_bridge_create_softap_netif(esp_netif_ip_info_t *ip_info, uint8_
 */
 esp_netif_t *esp_bridge_create_eth_netif(esp_netif_ip_info_t *ip_info, uint8_t mac[6], bool data_forwarding, bool enable_dhcps);
 
+// Add declaration for dual ethernet SPI initialization function
+#if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
+esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t* eth_netif_spi1);
+#endif
+
 // Add declaration for dual ethernet netif creation function
 #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
 /**

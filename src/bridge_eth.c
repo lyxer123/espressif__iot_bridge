@@ -461,55 +461,6 @@ esp_netif_t* esp_bridge_create_eth_netif(esp_netif_ip_info_t* ip_info, uint8_t m
 }
 
 #if defined(CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT)
-/**
-* @brief Create dual eth netif for bridge.
-*
-* @param[in] ip_info0: custom ip address for first interface, if set NULL, it will automatically be assigned.
-* @param[in] mac0: custom mac address for first interface, if set NULL, it will automatically be assigned.
-* @param[in] data_forwarding0: whether to use first interface as data forwarding netif
-* @param[in] enable_dhcps0: whether to enable DHCP server for first interface
-* @param[in] ip_info1: custom ip address for second interface, if set NULL, it will automatically be assigned.
-* @param[in] mac1: custom mac address for second interface, if set NULL, it will automatically be assigned.
-* @param[in] data_forwarding1: whether to use second interface as data forwarding netif
-* @param[in] enable_dhcps1: whether to enable DHCP server for second interface
-*
-* @return
-*      - instance: the first netif instance created successfully
-*      - NULL: failed because some error occurred
-*/
-esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], bool data_forwarding0, bool enable_dhcps0,
-                                              esp_netif_ip_info_t *ip_info1, uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1)
-{
-    // Create first ethernet interface
-    esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0, data_forwarding0, enable_dhcps0);
-    
-    // Small delay to ensure proper initialization
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // Create second ethernet interface with different parameters to avoid conflicts
-    esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1, data_forwarding1, enable_dhcps1);
-    
-    // Initialize both SPI ethernet interfaces (only when dual ethernet is supported and SPI ethernet is used)
-    #if CONFIG_BRIDGE_USE_SPI_ETHERNET
-    esp_bridge_dual_eth_spi_init(netif0, netif1);
-    #endif
-    
-    if (netif0 && netif1) {
-        ESP_LOGI(TAG, "Dual Ethernet interfaces created successfully");
-        return netif0;
-    } else {
-        ESP_LOGE(TAG, "Failed to create dual Ethernet interfaces");
-        // Clean up if one of them failed
-        if (netif0) {
-            esp_netif_destroy(netif0);
-        }
-        if (netif1) {
-            esp_netif_destroy(netif1);
-        }
-        return NULL;
-    }
-}
-
 esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t* eth_netif_spi1)
 {
     esp_err_t ret = ESP_FAIL;
@@ -627,5 +578,63 @@ esp_err_t esp_bridge_dual_eth_spi_init(esp_netif_t* eth_netif_spi0, esp_netif_t*
     }
 
     return ret;
+}
+
+/**
+* @brief Create dual eth netif for bridge.
+*
+* @param[in] ip_info0: custom ip address for first interface, if set NULL, it will automatically be assigned.
+* @param[in] mac0: custom mac address for first interface, if set NULL, it will automatically be assigned.
+* @param[in] data_forwarding0: whether to use first interface as data forwarding netif
+* @param[in] enable_dhcps0: whether to enable DHCP server for first interface
+* @param[in] ip_info1: custom ip address for second interface, if set NULL, it will automatically be assigned.
+* @param[in] mac1: custom mac address for second interface, if set NULL, it will automatically be assigned.
+* @param[in] data_forwarding1: whether to use second interface as data forwarding netif
+* @param[in] enable_dhcps1: whether to enable DHCP server for second interface
+*
+* @return
+*      - instance: the first netif instance created successfully
+*      - NULL: failed because some error occurred
+*/
+esp_netif_t *esp_bridge_create_dual_eth_netif(esp_netif_ip_info_t *ip_info0, uint8_t mac0[6], bool data_forwarding0, bool enable_dhcps0,
+                                              esp_netif_ip_info_t *ip_info1, uint8_t mac1[6], bool data_forwarding1, bool enable_dhcps1)
+{
+    // Create first ethernet interface
+    esp_netif_t *netif0 = esp_bridge_create_eth_netif(ip_info0, mac0, data_forwarding0, enable_dhcps0);
+    
+    // Small delay to ensure proper initialization
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Create second ethernet interface with different parameters to avoid conflicts
+    esp_netif_t *netif1 = esp_bridge_create_eth_netif(ip_info1, mac1, data_forwarding1, enable_dhcps1);
+    
+    // Initialize both SPI ethernet interfaces (only when dual ethernet is supported and SPI ethernet is used)
+    #if CONFIG_BRIDGE_USE_SPI_ETHERNET
+    if (netif0 && netif1) {
+        esp_err_t ret = esp_bridge_dual_eth_spi_init(netif0, netif1);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to initialize dual SPI ethernet: %s", esp_err_to_name(ret));
+            // Clean up
+            esp_netif_destroy(netif0);
+            esp_netif_destroy(netif1);
+            return NULL;
+        }
+    }
+    #endif
+    
+    if (netif0 && netif1) {
+        ESP_LOGI(TAG, "Dual Ethernet interfaces created successfully");
+        return netif0;
+    } else {
+        ESP_LOGE(TAG, "Failed to create dual Ethernet interfaces");
+        // Clean up if one of them failed
+        if (netif0) {
+            esp_netif_destroy(netif0);
+        }
+        if (netif1) {
+            esp_netif_destroy(netif1);
+        }
+        return NULL;
+    }
 }
 #endif // CONFIG_BRIDGE_DUAL_ETHERNET_SUPPORT
